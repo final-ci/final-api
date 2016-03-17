@@ -8,7 +8,7 @@ module FinalAPI
 
       app.options "*" do
         response.headers["Allow"] = "HEAD,GET,PUT,DELETE,OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "X-Requested-With, X-HTTP-Method-Override, Content-Type, Cache-Control, Accept, UserName, AuthenticationToken"
+        response.headers["Access-Control-Allow-Headers"] = "X-Requested-With, X-HTTP-Method-Override, Content-Type, Cache-Control, Accept, name, AuthenticationToken"
         halt 200
       end
 
