@@ -70,13 +70,12 @@ module FinalAPI
             'stoppedBy': build.stopped_by.try(:name), # TODO
 
             'isTsd': true,
-            'checkpoints':    config[:checkpoints],
-            'debugging':      config[:debbuging],
-            'buildSignal':    config[:build_signal],
-            'scenarioScript': config[:scenario_script],
-            'packageSource':  config[:package_source],
+            'checkpoints':    checkpoints,
+            'debugging':      config[:debbuging] || false,
+            'buildSignal':    config[:build_signal] || false,
+            'scenarioScript': config[:scenario_script] || false,
             'executionLogs':  request.try(:message).to_s,
-            'stashTSD':       config[:tsd_content],
+            'stashTSD':       config[:stashTsd],
             'runtimeConfig':  ddtf_runtimeConfig,
 
             'parts': parts_status,
@@ -86,6 +85,20 @@ module FinalAPI
 
             #progress bar:
             'results': ddtf_results_distribution
+          }
+        end
+
+        def retest_data
+          config = build.config
+          {
+            'email' => config[:email],
+            'package' => config[:branch],
+            'strategy' => config[:strategy],
+            'build' => build.build_info,
+            'description' => config[:description],
+            'checkpoints' => checkpoints,
+            'runtimeConfigFields' => ddtf_runtimeConfig,
+            'tsd' => build.config[:tsdContent]
           }
         end
 
@@ -128,6 +141,10 @@ module FinalAPI
 
         def ddtf_runtimeConfig
           build.config[:runtimeConfig] || []
+        end
+
+        def checkpoints
+          build.config[:checkpoint] || false
         end
 
         def parts_status
