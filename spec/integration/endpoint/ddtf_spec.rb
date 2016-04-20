@@ -361,12 +361,12 @@ describe 'DDTF' do
     end
   end
 
-  describe 'POST /ddtf/builds/:id/cancel' do
+  describe 'PUT /ddtf/tests/:id/stop' do
     let(:build) { Factory(:build, state: 'created') }
 
     it 'set state in DB' do
-      post "/ddtf/builds/#{build.id}/cancel"
-      expect(last_response.status).to eq(202)
+      put "/ddtf/tests/#{build.id}/stop"
+      expect(last_response.status).to eq(200)
       build.reload
       expect(build.state).to eq 'canceled'
     end
