@@ -70,8 +70,8 @@ module FinalAPI
             'stoppedBy': build.stopped_by.try(:name), # TODO
 
             'isTsd': true,
-            'checkpoints':    config[:checkpoints],
-            'debugging':      config[:debbuging],
+            'checkpoints':    config[:checkpoints] || false,
+            'debugging':      config[:debugging] || false,
             'buildSignal':    config[:build_signal],
             'scenarioScript': config[:scenario_script],
             'packageSource':  config[:package_source],
