@@ -39,6 +39,15 @@ module FinalAPI
             FinalAPI::V1::Http::DDTF_Build.new(build, {}).test_data.to_json
           end
 
+          app.post '/ddtf/tests/:id/retest' do
+            build = Build.find(params[:id])
+            retest_data = FinalAPI::V1::Http::DDTF_Build.new(build, {}).retest_data
+            retest_data['runtimeConfigFields'].reject! do |key, _|
+              key[:definition].downcase.start_with?("webserver")
+            end
+            retest_data.to_json
+          end
+
           app.get '/ddtf/tests/:id/parts' do
             build = Build.find(params[:id])
             last_modified build.updated_at
@@ -53,18 +62,14 @@ module FinalAPI
             enqueue_data = TsdUtils::EnqueueData.new(payload)
 
             begin
-              tsd = enqueue_data.load_tsd
-              enqueue_data.normalize
-              enqueue_data.resolve_strategy
-              enqueue_data.build
-              enqueue_data.resolve_email
+              enqueue_data.build_all
             rescue => err
               halt 422, { error: 'Unable to process TSD data: ' + err.message }.to_json
             end
 
             halt 400, enqueue_data.errors.to_json unless enqueue_data.valid?
 
-            config = DdtfHelpers.build_config(payload, tsd)
+            config = DdtfHelpers.build_config(payload, enqueue_data)
 
             user_name = env['HTTP_NAME']
             halt 422, { error: "'name' header not specified" } if user_name.blank?

@@ -8,24 +8,26 @@ module FinalAPI
         class << self
 
           public
-          def build_config(test_data, tsd)
+
+          def build_config(test_data, enqueue_data)
             {
               language: 'tsd',
               git:
               {
                 no_clone: true
               },
-              name: tsd['name'],
-              description: test_data.get_ikey('Description'),
-              branch: test_data.get_ikey('Package'),
+              name: enqueue_data.tsd['name'],
+              description: enqueue_data.description,
+              packageFrom: enqueue_data.package_from,
+              branch: enqueue_data.package_source,
               build: test_data.get_ikey('Build'),
-              strategy: test_data.get_ikey('Strategy') || tsd['defaultStrategy'],
-              email: test_data.get_ikey('Email'),
+              strategy: enqueue_data.tsd['defaultStrategy'] || test_data.get_ikey('Strategy'),
+              email: enqueue_data.email,
               checkpoint: test_data.get_ikey('Checkpoints'),
               scenarioScript: test_data.get_ikey('ScenarioScript'),
               stashTsd: test_data.get_ikey('StashTSD'),
-              tsdContent: test_data.get_ikey('File'),
-              runtimeConfig: test_data.get_ikey('RuntimeConfigFields'),
+              tsdContent: enqueue_data.tsd,
+              runtimeConfig: enqueue_data.runtime_config,
               ddtfUuid: test_data.get_ikey('Id')
             }
           end
