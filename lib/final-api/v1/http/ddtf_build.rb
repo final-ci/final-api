@@ -66,17 +66,15 @@ module FinalAPI
             'enqueued': build.started_at.to_s, #TODO remove to_s
             'startedBy': build.owner.try(:name).to_s,
 
-            'stopped': build.state == 'cancelled',
+            'stopped': build.state == 'canceled',
             'stoppedBy': build.stopped_by.try(:name), # TODO
 
             'isTsd': true,
-            'checkpoints':    config[:checkpoints],
-            'debugging':      config[:debbuging],
-            'buildSignal':    config[:build_signal],
-            'scenarioScript': config[:scenario_script],
-            'packageSource':  config[:package_source],
+            'checkpoints':    checkpoints,
+            'buildSignal':    config[:build_signal] || false,
+            'scenarioScript': config[:scenario_script] || false,
             'executionLogs':  request.try(:message).to_s,
-            'stashTSD':       config[:tsd_content],
+            'stashTSD':       config[:stashTsd],
             'runtimeConfig':  ddtf_runtimeConfig,
 
             'parts': parts_status,
@@ -86,6 +84,21 @@ module FinalAPI
 
             #progress bar:
             'results': ddtf_results_distribution
+          }
+        end
+
+        def retest_data
+          config = build.config
+          {
+            'email' => config[:email],
+            'packageSource' => config[:packageFrom],
+            'package' => config[:branch],
+            'strategy' => config[:strategy],
+            'build' => build.build_info,
+            'description' => config[:description],
+            'checkpoints' => checkpoints,
+            'runtimeConfigFields' => ddtf_runtimeConfig,
+            'tsd' => build.config[:tsdContent]
           }
         end
 
@@ -130,6 +143,10 @@ module FinalAPI
           build.config[:runtimeConfig] || []
         end
 
+        def checkpoints
+          build.config[:checkpoint] || false
+        end
+
         def parts_status
           build.parts_groups.map do |part_name, jobs|
             {
@@ -142,6 +159,22 @@ module FinalAPI
         def state2api_v1status(step)
           return 'NotSet' if step[:data]['status'].nil? && step[:result] == 'pending'
           STATE2API_V1STATUS[step[:data]['status'] || step[:result]]
+        end
+
+        def ddtf_v1_overall_status(results)
+          all_states = results.each_with_object([]) do |(k, v), result|
+            result << state2api_v1status(v)
+          end.uniq
+
+          return 'Skipped' if all_states.include? 'Skipped'
+          return 'Failed' if all_states.include? 'Failed'
+          return 'Invalid' if all_states.include? 'Invalid'
+          return 'NotTested' if all_states.include? 'NotTested'
+          return 'KnownBug' if all_states.include? 'KnownBug'
+          return 'NotSet' if all_states.include? 'NotSet'
+          return 'Passed' if all_states.include? 'Passed'
+
+          'NotPerformed'
         end
 
         def ddtf_test_aggregation_result
@@ -165,7 +198,7 @@ module FinalAPI
                   all: {
                     result: step_result.results.all? do |(_k, v)|
                       ['passed', 'pending'].include?(v[:result])
-                    end ? 'Passed' : 'Failed'
+                    end ? 'Passed' : ddtf_v1_overall_status(step_result.results)
                   }
                 )
               }
