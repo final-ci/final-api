@@ -7,6 +7,7 @@ describe 'DDTF' do
     FinalAPI::App
   end
 
+  let(:post_payload) { { file: { source: {} }.to_json }.to_json }
   let!(:user) { Factory(:user) }
 
   let(:headers) do
@@ -16,6 +17,15 @@ describe 'DDTF' do
       'HTTP_NAME' => user.login,
       'HTTP_AUTHENTICATIONTOKEN' => 'secret'
     }
+  end
+
+  before do
+    allow_any_instance_of(TsdUtils::EnqueueData).to receive(:build_all)
+    allow_any_instance_of(TsdUtils::EnqueueData).to receive(:tsd) { { 'source' => {} } }
+    allow_any_instance_of(Travis::Amqp::Publisher).to receive(:publish)
+
+    allow(FinalAPI.config).to receive_message_chain(:tsd_utils, :clusters) { {} }
+    allow(FinalAPI.config.ddtf).to receive(:email_domain) { 'mail.com' }
   end
 
   context 'POST /ddtf/builds' do
@@ -177,7 +187,7 @@ describe 'DDTF' do
       end
 
 
-      it 'search by combination of keywords' do
+      it 'searches by combination of keywords' do
         b = builds.last
         get '/ddtf/tests',
             { q: "name : #{b.name} id = \"#{b.id}\"" },
@@ -187,14 +197,23 @@ describe 'DDTF' do
         expect(response.first['id']).to eq b.id
       end
 
-      it 'ignore words without column definition' do
-        b = builds.last
-        get '/ddtf/tests',
-            { q: "name : #{b.name} XXXXX" },
-            headers
-        response = MultiJson.load(last_response.body)
-        expect(response.size).to eq 1
-        expect(response.first['id']).to eq b.id
+      context 'when invalid query given' do
+        let(:invalid_expression) { 'craaaaaazy' }
+        before do
+          b = builds.last
+          get '/ddtf/tests',
+              { q: "name : #{b.name} #{invalid_expression}" },
+              headers
+        end
+
+        it 'returns 400' do
+          expect(last_response.status).to eq 400
+        end
+
+        it 'says what is wrong' do
+          response = MultiJson.load(last_response.body)
+          expect(response['message']).to include(invalid_expression)
+        end
       end
     end
 
@@ -219,18 +238,16 @@ describe 'DDTF' do
         'strategy' => nil,
         'email' => nil,
         'startedBy' => 'Sven Fuchs',
-        'stopped' => false,
+        'stopped' => nil,
         'stoppedBy' => nil,
         'isTsd' => true,
-        'checkpoints' => nil,
-        'debugging' => nil,
-        'buildSignal' => nil,
-        'scenarioScript' => nil,
-        'packageSource' => nil,
-        'executionLogs' => '',
+        'checkpoints' => false,
+        'buildSignal' => false,
+        'scenarioScript' => false,
+        'executionLogs' => [],
         'stashTSD' => nil,
         'runtimeConfig' => [],
-        'parts' => [{ 'name' => nil, 'result' => 'created' }],
+        'parts' => [{ 'name' => nil, 'result' => 'Created' }],
         'tags' => [],
         'result' => 'passed',
         'results' => [{ 'type' => 'created', 'value' => 1.0 }],
@@ -240,8 +257,111 @@ describe 'DDTF' do
     end
   end
 
-  context 'GET /ddtf/tests/:id' do
-    it 'returns particular build converted'
+  describe 'GET /ddtf/tests/:id' do
+    before do
+      allow_any_instance_of(TsdUtils::EnqueueData).to receive(:valid?) { true }
+      allow_any_instance_of(TsdUtils::EnqueueData).to receive(:clusters) { ['cluster'] }
+    end
+
+    context 'when build exists' do
+      build_id = nil
+      before do
+        post '/ddtf/tests', post_payload, headers
+        build_id = MultiJson.load(last_response.body)['id'].to_s
+      end
+
+      it 'returns 200' do
+        get "/ddtf/tests/#{build_id}", headers
+        expect(last_response.status).to eq(200)
+      end
+    end
+
+    context 'when build does not exist' do
+      it 'returns 404' do
+        get '/ddtf/tests/foo', headers
+        expect(last_response.status).to eq(404)
+      end
+    end
+  end
+
+  describe 'GET /ddtf/tests/new' do
+    before do
+      allow(TsdUtils::ContentFetcher).to receive(:load) do
+        {
+          'source': { 'GIT' => 'some link' }
+        }.to_json
+      end
+    end
+
+    it 'returns 400 when missing stashTsdLink parameter' do
+      get '/ddtf/tests/new'
+      expect(last_response.status).to eq(400)
+    end
+
+    it 'returns 200 and new test payload' do
+      get '/ddtf/tests/new?stashTSDLink=link'
+      result = JSON.parse(last_response.body)
+      expect(last_response.status).to eq(200)
+
+      expect(result['packageFrom']).to eq 'GIT'
+      expect(result['stashTSD']).to eq 'link'
+      expect(result['package']).to eq 'some link'
+    end
+
+    context 'when Content fetcher throws error' do
+      before do
+        allow(TsdUtils::ContentFetcher).to receive(:load) { raise ArgumentError }
+      end
+
+      it 'returns 404' do
+        get '/ddtf/tests/new?stashTSDLink=unexisting_tsd'
+        expect(last_response.status).to eq(404)
+      end
+    end
+
+    context 'when TSD is not valid' do
+      before do
+        allow(TsdUtils::ContentFetcher).to receive(:load) { 'Not valid tsd' }
+      end
+
+      it 'returns 404' do
+        get '/ddtf/tests/new?stashTSDLink=not_valid_tsd'
+        expect(last_response.status).to eq(404)
+      end
+    end
+  end
+
+  describe 'POST /ddtf/tests/:id/retest' do
+    before do
+      allow_any_instance_of(TsdUtils::EnqueueData).to receive(:valid?) { true }
+      allow_any_instance_of(TsdUtils::EnqueueData).to receive(:clusters) { ['cluster'] }
+    end
+
+    let(:build) { Factory(:build) }
+    let(:webserver_runtime_config) do
+      [{ definition:  'webserver1', value: '1.2.3.4' },
+       { definition: 'do_you', value: 'see_me' }]
+    end
+
+    it 'omits webserver runtime config fields' do
+      allow_any_instance_of(TsdUtils::EnqueueData).to receive(:runtime_config) do
+        webserver_runtime_config
+      end
+      post '/ddtf/tests', { runtimeConfigFields: webserver_runtime_config }.to_json, headers
+      build_id = MultiJson.load(last_response.body)['id'].to_s
+      post "/ddtf/tests/#{build_id}/retest", headers
+      response = MultiJson.load(last_response.body)
+      expected_runtime_config = [{ 'definition' => 'do_you', 'value' => 'see_me' }]
+      expect(response['runtimeConfigFields']).to eq(expected_runtime_config)
+    end
+
+    it 'returns test suite definition' do
+      post '/ddtf/tests', post_payload, headers
+      build_id = MultiJson.load(last_response.body)['id'].to_s
+      get '/ddtf/tests/' + build_id, headers
+      response = MultiJson.load(last_response.body)
+      expect(response['tsdContent']).to eq build['tsdContent']
+    end
   end
 
   context 'GET /ddtf/tests/:id/part' do
@@ -249,11 +369,13 @@ describe 'DDTF' do
   end
 
   context 'POST /ddtf/tests' do
-    let(:json_data) { '{}' }
-
     context 'data not parsable' do
+      before do
+        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:build_all) { raise 'BOOM!' }
+      end
+
       it 'returns status code 422' do
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
         expect(last_response.status).to eq(422)
         expect(last_response.body).to include('error')
       end
@@ -261,47 +383,34 @@ describe 'DDTF' do
 
     context 'data not valid' do
       before :each do
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:load_tsd) { {} }
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:normalize)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_strategy)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:build)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_email)
         allow_any_instance_of(TsdUtils::EnqueueData).to receive(:valid?) { false }
         allow_any_instance_of(TsdUtils::EnqueueData).to receive(:errors) { ['BOOM!'] }
       end
 
       it 'returns status code 400' do
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
         expect(last_response.status).to eq(400)
       end
 
       it 'returns array of reasons' do
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
         expect(JSON.parse(last_response.body)).to be_an_instance_of(Array)
       end
     end
 
     context 'name not specified in headers' do
       before :each do
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:load_tsd) { {} }
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:normalize)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_strategy)
         allow_any_instance_of(TsdUtils::EnqueueData).to receive(:valid?) { true }
       end
 
       it 'returns status code 422' do
-        post '/ddtf/tests', json_data, {}
+        post '/ddtf/tests', post_payload, {}
         expect(last_response.status).to eq(422)
       end
     end
 
     context 'build id not retrieved' do
       before do
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:load_tsd) { {} }
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:normalize)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_strategy)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:build)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_email)
         allow_any_instance_of(TsdUtils::EnqueueData).to receive(:valid?) { true }
         allow(FinalAPI::Endpoint::DDTF::DdtfHelpers).to receive(:get_new_build_params) { {} }
         allow(FinalAPI::Endpoint::DDTF::DdtfHelpers).to receive(:create_build)
@@ -310,13 +419,13 @@ describe 'DDTF' do
       end
 
       it 'returns status code 422' do
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
         expect(last_response.status).to eq(422)
       end
 
       it 'returns detailed description' do
-        post '/ddtf/tests', json_data, headers
-        expect(JSON.parse(last_response.body)).to include('error' => 'Could not create new build')
+        post '/ddtf/tests', post_payload, headers
+        expect(JSON.parse(last_response.body)).to include('message' => 'Could not create new build')
       end
     end
 
@@ -325,29 +434,22 @@ describe 'DDTF' do
 
       before do
         allow_any_instance_of(TsdUtils::EnqueueData).to receive(:valid?) { true }
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:load_tsd) { {} }
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:normalize)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_strategy)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:build)
-        allow_any_instance_of(TsdUtils::EnqueueData).to receive(:resolve_email)
         allow_any_instance_of(TsdUtils::EnqueueData).to receive(:clusters) { ['cluster'] }
         allow(FinalAPI::Endpoint::DDTF::DdtfHelpers).to receive(:get_new_build_params) { {} }
         allow(FinalAPI::Endpoint::DDTF::DdtfHelpers).to receive(:create_build) { build }
 
-        allow(FinalAPI.config).to receive_message_chain(:tsd_utils, :clusters) { {} }
         allow(FinalAPI.config).to receive(:allowed_origin) { '*' }
-        allow(FinalAPI.config.ddtf).to receive(:email_domain) { 'mail.com' }
 
         allow(TsdUtils::EnqueueData).to receive(:prepare_xml)
       end
 
       it 'returns status code 200' do
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
         expect(last_response.status).to eq(200)
       end
 
       it 'returns expected data' do
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
         expect(JSON.parse(last_response.body)).to include(
           'id', 'name', 'build', 'result', 'results', 'enqueued')
       end
@@ -356,17 +458,17 @@ describe 'DDTF' do
         expect_any_instance_of(Travis::Amqp::Publisher).to receive(:publish)
           .with(hash_including(:enqueue_data => a_string_matching("<BuildId>#{build.id}</BuildId>")))
 
-        post '/ddtf/tests', json_data, headers
+        post '/ddtf/tests', post_payload, headers
       end
     end
   end
 
-  describe 'POST /ddtf/builds/:id/cancel' do
+  describe 'PUT /ddtf/tests/:id/stop' do
     let(:build) { Factory(:build, state: 'created') }
 
     it 'set state in DB' do
-      post "/ddtf/builds/#{build.id}/cancel"
-      expect(last_response.status).to eq(202)
+      put "/ddtf/tests/#{build.id}/stop"
+      expect(last_response.status).to eq(200)
       build.reload
       expect(build.state).to eq 'canceled'
     end

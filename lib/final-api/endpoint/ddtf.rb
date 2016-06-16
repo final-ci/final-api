@@ -17,18 +17,52 @@ module FinalAPI
             }.to_json
           end
 
+          app.get '/ddtf/tests/new' do
+            halt_with_400('Please provide stashTSDLink url') unless params[:stashTSDLink]
+
+            tsd = nil
+            begin
+              tsd_content = TsdUtils::ContentFetcher.load(params[:stashTSDLink])
+              tsd = JSON.parse(tsd_content.encode('ASCII', undef: :replace, replace: ''))
+            rescue
+              halt_with_404("Unable to load tsd from: #{params[:stashTSDLink]}")
+            end
+
+            source = tsd.get_ikey('source')
+
+            halt 200, {
+              email: tsd.get_ikey('responsible'),
+              packageFrom: source.get_ikey('git') ? 'GIT' : 'UNC',
+              package: source.get_ikey('git') || source.get_ikey('unc'),
+              strategy: tsd.get_ikey('defaultStrategy'),
+              build: nil,
+              description: tsd.get_ikey('description'),
+              scenarioScripts: false,
+              checkpoints: false,
+              stashTSD: params[:stashTSDLink],
+              runtimeConfigFields: tsd.get_ikey('runtimeConfig'),
+              tsd: tsd.to_json
+            }.to_json
+
+          end
+
           # /ddtf/tests?limit=20&offset=0&q=yyyy+id:+my_id
           app.get '/ddtf/tests' do
-            limit = params[:limit] ? params[:limit].to_i : 20
-            offset = params[:offset] ? params[:offset].to_i : 0
-            builds = Build.order(Build.arel_table['created_at'].desc).limit(limit).offset(offset)
-            builds = builds.ddtf_search(params[:q])
+            begin
+              limit = params[:limit] ? params[:limit].to_i : 20
+              offset = params[:offset] ? params[:offset].to_i : 0
+              builds = Build.search(params[:q], limit, offset)
 
-            # HACK: workaround make builds valid, could be removed later, when DB
-            # will be valid
-            builds.each { |b| b.sanitize }
+              FinalAPI::V1::Http::DDTF_Builds.new(builds, {}).data.to_json
+            rescue Build::InvalidQueryError => e
+              halt_with_400(e.to_s)
+            end
+          end
 
-            FinalAPI::V1::Http::DDTF_Builds.new(builds, {}).data.to_json
+          app.get '/ddtf/tests/:id/executionLogs' do
+            build = Build.find(params[:id])
+
+            FinalAPI::V1::Http::DDTF_Build.new(build).execution_logs.to_json
           end
 
           app.get '/ddtf/tests/:id' do
@@ -37,6 +71,15 @@ module FinalAPI
             last_modified build.updated_at
             etag sha256.hexdigest(build.to_xml), :weak
             FinalAPI::V1::Http::DDTF_Build.new(build, {}).test_data.to_json
+          end
+
+          app.post '/ddtf/tests/:id/retest' do
+            build = Build.find(params[:id])
+            retest_data = FinalAPI::V1::Http::DDTF_Build.new(build, {}).retest_data
+            retest_data['runtimeConfigFields'].reject! do |key, _|
+              key[:definition].downcase.start_with?("webserver")
+            end
+            retest_data.to_json
           end
 
           app.get '/ddtf/tests/:id/parts' do
@@ -53,21 +96,17 @@ module FinalAPI
             enqueue_data = TsdUtils::EnqueueData.new(payload)
 
             begin
-              tsd = enqueue_data.load_tsd
-              enqueue_data.normalize
-              enqueue_data.resolve_strategy
-              enqueue_data.build
-              enqueue_data.resolve_email
+              enqueue_data.build_all
             rescue => err
-              halt 422, { error: 'Unable to process TSD data: ' + err.message }.to_json
+              halt_with_422('Unable to process TSD data: ' + err.message)
             end
 
             halt 400, enqueue_data.errors.to_json unless enqueue_data.valid?
 
-            config = DdtfHelpers.build_config(payload, tsd)
+            config = DdtfHelpers.build_config(payload, enqueue_data)
 
             user_name = env['HTTP_NAME']
-            halt 422, { error: "'name' header not specified" } if user_name.blank?
+            halt_with_422("'name' header not specified") if user_name.blank?
             user = User.find_by_name(user_name) ||
                    User.create!(
                     name: user_name,
@@ -79,7 +118,7 @@ module FinalAPI
 
             build = DdtfHelpers.create_build(repository.id, user.id, config)
 
-            halt 422, { error: 'Could not create new build' }.to_json if build.nil?
+            halt_with_422('Could not create new build') if build.nil?
 
             cluster_name = enqueue_data.clusters.first
             cluster_endpoint = FinalAPI.config.tsd_utils.clusters[cluster_name.to_sym]
@@ -102,6 +141,14 @@ module FinalAPI
             # TODO: imho atom_response should be removed,
             #  FinalAPI::V1::Http::DDTF_Build#test_data should be used
             halt 200, FinalAPI::V1::Http::DDTF_Build.new(build, {}).atom_response.to_json
+          end
+
+          app.put '/ddtf/tests/:id/stop' do
+            service = Travis.service(:cancel_ddtf_build, current_user, params.merge(source: 'api'))
+            halt(403, { messages: service.messages }.to_json) unless service.authorized?
+            halt(204, { messages: service.messages }.to_json) unless service.build
+            Travis.run_service(:cancel_ddtf_build, current_user, id: params['id'])
+            halt 200
           end
 
           app.post '/ddtf/builds' do
@@ -140,14 +187,6 @@ module FinalAPI
             params['ids'] = params['ids'].split(',') if params['ids'].is_a(String)
             result = Travis.service(:find_builds, params).run
             FinalAPI::Builder.new(result).data.to_json
-          end
-
-          app.post '/ddtf/builds/:id/cancel' do
-            service = Travis.service(:cancel_ddtf_build, current_user, params.merge(source: 'api'))
-            halt(403, { messages: service.messages }.to_json) unless service.authorized?
-            halt(204, { messages: service.messages }.to_json) unless service.build
-            Travis.run_service(:cancel_ddtf_build, current_user, id: params['id'])
-            halt 202
           end
 
           app.post '/ddtf/builds/:id/restart' do

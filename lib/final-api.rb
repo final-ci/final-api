@@ -95,20 +95,20 @@ module FinalAPI
       r = results.reject { |_res, count| count <= 0 }.keys.uniq.compact.map(&:to_s)
 
       # when 'errored' step exists
-      return 'errored' if r.include?('errored')
+      return 'Errored' if r.include?('errored')
 
       # when 'failed' step exists
-      return 'failed' if r.include?('failed')
+      return 'Failed' if r.include?('failed')
 
-      return 'failed' if (
+      return 'Failed' if (
         r.include?('nottested') ||
         r.include?('notTested') ||
         r.include?('not_tested')
       )
 
-      return 'created' if r.include?('pending') || r.include?('created')
+      return 'Created' if r.include?('pending') || r.include?('created')
 
-      return 'passed' if
+      return 'Passed' if
         r.include?('passed') &&
         (
           r - %w(passed
@@ -119,11 +119,11 @@ module FinalAPI
         ).empty?
 
       # when no results
-      return 'errored' if r.empty?
+      return 'Errored' if r.empty?
 
       # Code never should goes here
       FinalAPI.logger.error "Unknown result for: #{r.inspect}"
-      return 'errored'
+      return 'Errored'
     end
   end
 end

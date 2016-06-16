@@ -18,6 +18,10 @@ production:
     node_queue: builds.windows.ussnode
     cancel_command_prefix: cmd.
     email_domain: mail.com
+  tsd_utils:
+    clusters:
+      cluster-name-1: cluster-endpoint-1
+      cluster-name-2: cluster-endpoint-2
 
 development:
   log_level: :debug
@@ -37,6 +41,10 @@ development:
     command_node_queue: commands.windows.ussnode
     cancel_command_prefix: cmd.
     email_domain: mail.com
+  tsd_utils:
+    clusters:
+      cluster-name-1: cluster-endpoint-1
+      cluster-name-2: cluster-endpoint-2
 
 test:
   log_level: :warn
@@ -57,6 +65,10 @@ test:
     command_node_queue: commands.windows.ussnode
     cancel_command_prefix: cmd.
     email_domain: mail.com
+  tsd_utils:
+    clusters:
+      cluster-name-1: cluster-endpoint-1
+      cluster-name-2: cluster-endpoint-2
   test_results_database:
     adapter: postgresql
     database: real_test_results_db_name
