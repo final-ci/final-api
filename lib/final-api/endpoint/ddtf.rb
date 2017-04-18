@@ -104,6 +104,14 @@ module FinalAPI
             halt 200, FinalAPI::V1::Http::DDTF_Build.new(build, {}).atom_response.to_json
           end
 
+          app.put '/ddtf/tests/:id/stop' do
+            service = Travis.service(:cancel_ddtf_build, current_user, params.merge(source: 'api'))
+            halt(403, { messages: service.messages }.to_json) unless service.authorized?
+            halt(204, { messages: service.messages }.to_json) unless service.build
+            Travis.run_service(:cancel_ddtf_build, current_user, id: params['id'])
+            halt 200
+          end
+
           app.post '/ddtf/builds' do
             build = DdtfHelpers.create_build(params['repository_id'], params['user_id'], params['config'])
             halt 404 if build.nil?
@@ -127,7 +135,7 @@ module FinalAPI
             build.save!
 
             FinalAPI::Builder.new(job).data.to_json
-          end
+          end  
 
           # ids - ids of build separated by comma
           # otehrwise:
@@ -140,14 +148,6 @@ module FinalAPI
             params['ids'] = params['ids'].split(',') if params['ids'].is_a(String)
             result = Travis.service(:find_builds, params).run
             FinalAPI::Builder.new(result).data.to_json
-          end
-
-          app.post '/ddtf/builds/:id/cancel' do
-            service = Travis.service(:cancel_ddtf_build, current_user, params.merge(source: 'api'))
-            halt(403, { messages: service.messages }.to_json) unless service.authorized?
-            halt(204, { messages: service.messages }.to_json) unless service.build
-            Travis.run_service(:cancel_ddtf_build, current_user, id: params['id'])
-            halt 202
           end
 
           app.post '/ddtf/builds/:id/restart' do

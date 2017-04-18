@@ -3,7 +3,7 @@ source 'https://rubygems.org'
 
 ruby '2.2.2'
 
-gem 'travis-core',        github: 'final-ci/travis-core'
+gem 'travis-core',        github: 'AVGTechnologies/travis-core'
 gem 'travis-config',      github: 'final-ci/travis-config'
 gem 'travis-support',     github: 'final-ci/travis-support'
 gem 'test-aggregation',   github: 'final-ci/test-aggregation'
