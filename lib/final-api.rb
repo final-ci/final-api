@@ -13,6 +13,8 @@ require 'metriks/reporter/graphite'
 require 'final-api/ddtf'
 require 'final-api/model_extensions'
 
+require 'test_aggregation'
+
 require 'sidekiq'
 require 'travis-sidekiqs'
 require 'sidekiq-status'
